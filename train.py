@@ -6,6 +6,10 @@ from torch.utils.data import TensorDataset, DataLoader
 from models.gemma_transformer_classifier import SimpleGemmaTransformerClassifier
 from sklearn.metrics import f1_score 
 
+##Auto-Detect Device
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+print(f"Training on device: {device}")
+
 ## Parameters
 learning_rate = 0.005
 batch = 1
@@ -18,6 +22,8 @@ buy  = [0., 0., 1.]
 
 ## Model
 model = SimpleGemmaTransformerClassifier()
+model = model.to(device) 
+
 #optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 criterion = nn.CrossEntropyLoss()
@@ -74,15 +80,13 @@ for epoch in range(epochs):
 
     for i in range(len(inputs) // batch):
         input_batch  = inputs[i * batch : i * batch + batch]
-        target_batch = torch.from_numpy(targets[i * batch : i * batch + batch])
+        
+        target_batch = torch.from_numpy(targets[i * batch : i * batch + batch]).float().to(device)
 
         optimizer.zero_grad()
         logits = model(input_batch)
 
-        loss = criterion(
-            logits,
-            target_batch.float().to(torch.device('mps'))
-        )
+        loss = criterion(logits, target_batch)
         loss.backward()
         optimizer.step()
         
@@ -101,12 +105,12 @@ model.eval()
 with torch.no_grad():
     for i in range(len(test_features)):
         input_text  = [test_features[i]]
-        target = torch.tensor(test_labels[i])
+        target = torch.tensor(test_labels[i]).float().to(device)
 
         logits = model(input_text)
         probs = logits.softmax(dim=-1).cpu()
         predicted = torch.argmax(probs, dim=-1)
-        actual = torch.argmax(target.float().to(torch.device('mps')))
+        actual = torch.argmax(target)
 
         all_predictions.append(predicted.item())
         all_actuals.append(actual.item())
