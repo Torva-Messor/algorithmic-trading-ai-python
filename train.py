@@ -22,7 +22,7 @@ model = SimpleGemmaTransformerClassifier()
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 criterion = nn.CrossEntropyLoss()
 
-## read BTC-USD_news_with_price.json
+## Read JSON data
 with open('BTC-USD_news_with_price.json', 'r') as f:
     training = json.load(f)
 
@@ -31,14 +31,25 @@ features = []
 labels = []
 
 for item in training:
+    ## Format the metrics cleanly
+    vix_val = f"{item['global_vix']:.2f}" if isinstance(item['global_vix'], (int, float)) else item['global_vix']
+    dxy_val = f"{item['macro_dxy']:.2f}" if isinstance(item['macro_dxy'], (int, float)) else item['macro_dxy']
+    tnx_val = f"{item['macro_tnx']:.3f}%" if isinstance(item['macro_tnx'], (int, float)) else item['macro_tnx']
+    vol_val = f"{item['local_volatility']:.2f}" if isinstance(item['local_volatility'], (int, float)) else "0.00"
+
+    ## Inject Macro, Micro, and News context into the LLM's prompt
     features.append(
-        "\n".join([f"Price: {item['price']}",
-        f"Headline: {item['title']}",
-        f"Summary: {item['summary']}"])
+        "\n".join([
+            f"Macro Environment: US Dollar Index (DXY) is {dxy_val}. 10-Year Treasury Yield is {tnx_val}.",
+            f"Market Context: Global Volatility (VIX) is {vix_val}. Local BTC 1-hour volatility is {vol_val}.",
+            f"Current BTC Price: {item['price']}",
+            f"Headline: {item['title']}",
+            f"Summary: {item['summary']}"
+        ])
     )
 
     ## Generate labels based on percentage change
-    ## Actions Buy / Sell / Hold
+    ## Actions: Buy / Sell / Hold
     if item['percentage'] < -0.01:
         labels.append(sell)
     elif item['percentage'] > 0.01:
@@ -53,6 +64,7 @@ train_labels = labels[:split_index]
 test_features = features[split_index:]
 test_labels = labels[split_index:]
 
+## Training Loop
 item_losses = []
 model.train()
 for epoch in range(epochs):
@@ -61,18 +73,19 @@ for epoch in range(epochs):
     targets = np.array(train_labels)[stochastic]
 
     for i in range(len(inputs) // batch):
-        input  =  inputs[i * batch : i * batch + batch]
-        target = torch.from_numpy(targets[i * batch : i * batch + batch])
+        input_batch  = inputs[i * batch : i * batch + batch]
+        target_batch = torch.from_numpy(targets[i * batch : i * batch + batch])
 
         optimizer.zero_grad()
-        logits = model(input)
+        logits = model(input_batch)
 
         loss = criterion(
             logits,
-            target.float().to(torch.device('mps'))
+            target_batch.float().to(torch.device('mps'))
         )
         loss.backward()
         optimizer.step()
+        
         probs = logits.softmax(dim=-1).detach().cpu()
         item_losses.append(loss.item())
         cost = sum(item_losses[-250:]) / len(item_losses[-250:])
@@ -87,10 +100,10 @@ all_actuals = []
 model.eval()
 with torch.no_grad():
     for i in range(len(test_features)):
-        input  = [test_features[i]]
+        input_text  = [test_features[i]]
         target = torch.tensor(test_labels[i])
 
-        logits = model(input)
+        logits = model(input_text)
         probs = logits.softmax(dim=-1).cpu()
         predicted = torch.argmax(probs, dim=-1)
         actual = torch.argmax(target.float().to(torch.device('mps')))
@@ -102,13 +115,10 @@ with torch.no_grad():
             correct += 1
         total += 1
 
-# Calculate Accuracy
-print(f"Accuracy: {correct}/{total} = {correct / total:.4f}")
-
-# Calculate F1 Score
+## Calculate Accuracy and F1 Score
+accuracy = correct / total
 f1 = f1_score(all_actuals, all_predictions, average='weighted')
-print(f"F1 Score (weighted): {f1:.4f}")
-print("Done")
 
-print("Saving model...")
-torch.save(model.state_dict(), 'gemma_transformer_classifier.pth')
+print(f"\nEvaluation Results:")
+print(f"Test Accuracy: {accuracy * 100:.2f}%")
+print(f"Test F1 Score (Weighted): {f1:.4f}")
