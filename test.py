@@ -6,13 +6,19 @@ from torch.utils.data import TensorDataset, DataLoader
 from models.gemma_transformer_classifier import SimpleGemmaTransformerClassifier
 from sklearn.metrics import f1_score 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+print(f"Testing on device: {device}")
+
 ## Define our labels "tokens"
 sell = [1., 0., 0.]
 hold = [0., 1., 0.]
 buy  = [0., 0., 1.]
 
 model = SimpleGemmaTransformerClassifier()
-model.load_state_dict(torch.load('gemma_transformer_classifier.pth'))
+
+
+model.load_state_dict(torch.load('gemma_transformer_classifier.pth', map_location=device, weights_only=True))
+model = model.to(device) # Move model to detected device
 
 ## read BTC-USD_news_with_price.json
 with open('BTC-USD_news_with_price.json', 'r') as f:
@@ -53,12 +59,13 @@ model.eval()
 with torch.no_grad():
     for i in range(len(test_features)):
         input  = [test_features[i]]
-        target = torch.tensor(test_labels[i])
+        
+        target = torch.tensor(test_labels[i]).float().to(device)
 
         logits = model(input)
         probs = logits.softmax(dim=-1).cpu()
         predicted = torch.argmax(probs, dim=-1)
-        actual = torch.argmax(target.float().to(torch.device('mps')))
+        actual = torch.argmax(target)
 
         all_predictions.append(predicted.item())
         all_actuals.append(actual.item())
